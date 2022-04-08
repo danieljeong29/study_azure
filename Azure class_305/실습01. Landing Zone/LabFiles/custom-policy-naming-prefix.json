@@ -1,0 +1,39 @@
+{
+  "mode": "All",
+  "policyRule": {
+    "if": {
+      "allof": [
+        {
+          "field": "type",
+          "equals": "[parameters('resourceType')]"
+        },
+        {
+          "not": {
+            "field": "name",
+            "like": "[concat(parameters('namePrefix'),'*')]"
+          }
+        }
+      ]
+    },
+    "then": {
+      "effect": "deny"
+    }
+  },
+  "parameters": {
+    "resourceType": {
+      "type": "String",
+      "metadata": {
+        "displayName": "Resource Type",
+        "description": "The resource type for this policy",
+        "strongType": "resourceTypes"
+      }
+    },
+    "namePrefix": {
+      "type": "String",
+      "metadata": {
+        "displayName": "Resource Name Prefix",
+        "description": "The Prefix that must be appended"
+      }
+    }
+  }
+}

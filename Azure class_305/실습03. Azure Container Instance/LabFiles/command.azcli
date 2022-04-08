@@ -1,0 +1,326 @@
+##### TASK 01 #####
+# Azure에 로그인
+az login
+
+# 리소스 그룹 만들기
+resourceGroup='01_createAciRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# 컨테이너 그룹 만들기
+containerGroupName='aci-ghost'
+az container create -g $resourceGroup -n $containerGroupName \
+  --image ghost \
+  --ports 2368 \
+  --ip-address public \
+  --dns-name-label [ACI_NAME] \
+  --no-wait
+
+# 컨테이너 확인
+az container show \
+  -g $resourceGroup -n $containerGroupName
+
+# 컨테이너 로그 보기
+az container logs -g $resourceGroup -n $containerGroupName
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+##### TASK 02 #####
+# 리소스 그룹 만들기
+resourceGroup='02_aciWindowsRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# 컨테이너 그룹 만들기
+containerGroupName='aci-win'
+az container create -g $resourceGroup -n $containerGroupName \
+  --image mcr.microsoft.com/dotnet/framework/samples:aspnetapp \
+  --ip-address public \
+  --dns-name-label [ACI_NAME] \
+  --os-type windows \
+  --memory 2 --cpu 2 \
+  --restart-policy OnFailure \
+  --no-wait
+
+# 컨테이너 상태 확인
+az container show -g $resourceGroup -n $
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 03 #####
+# 리소스 그룹 만들기
+resourceGroup='03_aciAcrRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# Azure Container Registry 만들기
+acrName='[ACR_NAME]'
+az acr create -g $resourceGroup -n $acrName \
+  --sku Basic --admin-enabled true
+
+# ACR 자격 증명 가져오기
+acrPassword=$(az acr credential show -n $acrName \
+  --query "passwords[0].value" -o tsv)
+
+loginServer=$(az acr show -n $acrName \
+  --query loginServer -o tsv)
+
+# Dockerfile에서 ACR로 이미지 빌드 및 푸시
+image="myweb:1.0"
+az acr build --image $image --registry $acrName \
+  --file Dockerfile .
+
+# ACR 이미지 확인
+az acr repository list -n $acrName -o table
+
+# ACR에 푸시한 이미지 실행
+az acr run -r $acrName --cmd 'docker run -d $Registry/myweb:1.0' /dev/null
+
+# ACR 이미지로 컨테이너 만들기
+containerGroupName="aci-acr"
+imageTag="$loginServer/$image"
+az container create -g $resourceGroup -n $containerGroupName \
+  --image $imageTag --cpu 1 --memory 1 \
+  --registry-username $acrName \
+  --registry-password $acrPassword \
+  --dns-name-label "[ACI_NAME]" --ports 80 \
+  --no-wait
+
+# 컨테이너 인스턴스의 URL 가져오기
+az container show -g $resourceGroup -n $containerGroupName \
+  --query ipAddress.fqdn -o tsv
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 04 #####
+# 리소스 그룹 만들기
+resourceGroup='04_aciVolumeRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# 스토리지 계정 만들기
+storageAccountName="acishare$RANDOM"
+echo $storageAccountName
+az storage account create -g $resourceGroup -n $storageAccountName \
+  --sku Standard_LRS
+
+# 스토리지 계정 연결 문자열 확인
+storageConnectionString=$(az storage account \
+  show-connection-string -n $storageAccountName \
+  -g $resourceGroup --query connectionString -o tsv)
+
+echo $storageConnectionString
+
+# File Share 만들기
+shareName='acishare'
+az storage share create -n $shareName \
+  --connection-string $storageConnectionString
+
+# 샘플 파일 업로드
+fileName='sample_video.mp4'
+localFile="[UPLOAD_FILE_PATH_NAME]"
+az storage file upload -s $shareName --source $localFile \
+  --connection-string $storageConnectionString
+
+# 스토리지 계정 키 가져오기
+storageKey=$(az storage account keys list \
+  -g $resourceGroup --account-name $storageAccountName \
+  --query "[0].value" -o tsv)
+
+echo $storageKey
+
+# 컨테이너 그룹 및 실행 명령 정의
+containerGroupName='aci-volume'
+commandLine="ffmpeg -i /mnt/azfile/$fileName -vf \"thumbnail,scale=640:360\" -frames:v 1 /mnt/azfile/${fileName}_thumb.png"
+
+# Azure File Share를 탑재한 컨테이너 그룹 만들기
+az container create \
+  -g $resourceGroup -n $containerGroupName \
+  --image jrottenberg/ffmpeg \
+  --restart-policy never \
+  --azure-file-volume-account-name $storageAccountName \
+  --azure-file-volume-account-key $storageKey \
+  --azure-file-volume-share-name $shareName \
+  --azure-file-volume-mount-path "/mnt/azfile" \
+  --command-line "$commandLine"
+
+# 컨테이너 로그 확인
+az container logs -g $resourceGroup -n $containerGroupName
+
+# 컨테이너 상태 확인
+az container show -g $resourceGroup -n $containerGroupName 
+
+# 생성된 파일 확인
+az storage file list -s $shareName -o table \
+  --connection-string $storageConnectionString
+
+# 썸네일 파일 다운로드
+downloadThumbnailPath="[DOWNLOAD_PATH]/${fileName}_thumb.png"
+az storage file download -s $shareName -p "${fileName}_thumb.png" \
+  --dest $downloadThumbnailPath \
+  --connection-string $storageConnectionString
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 05 #####
+# 리소스 그룹 만들기
+resourceGroup='05_aciGitRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# Git 리포지토리를 사용하는 컨테이너 그룹 만들기
+containerGroupName='aci-git'
+az container create \
+  --resource-group $resourceGroup \
+  --name $containerGroupName \
+  --image mcr.microsoft.com/azuredocs/aci-helloworld \
+  --dns-name-label [ACI_NAME] \
+  --ports 80 \
+  --gitrepo-url https://github.com/Azure-Samples/aci-helloworld \
+  --gitrepo-mount-path /mnt/aci-helloworld
+
+# 컨테이너에서 Git 리포지토리 확인
+az container exec --resource-group $resourceGroup --name $containerGroupName \
+  --exec-command /bin/sh
+
+ls -l /mnt/aci-helloworld
+
+# 리소스 그룹 삭제
+exit
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 06 #####
+# 리소스 그룹 만들기
+resourceGroup='06_aciSecretRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# 컨테이너 그룹 만들기
+containerGroupName='aci-secret'
+az container create -n $containerGroupName -g $resourceGroup \
+  --image alpine --restart-policy never \
+  --secrets PASSWORD="mySecretPassword!" DBCONN="mongodb://myDBReader:D1fficultP%40ssw0rd@mongodb0.example.com:27017/?authSource=admin" \
+  --secrets-mount-path "/mnt/secrets" \
+  --command-line "/bin/sh -c 'cat /mnt/secrets/PASSWORD; echo ""; cat /mnt/secrets/DBCONN'"
+
+# 로그 확인
+az container logs -n $containerGroupName -g $resourceGroup
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 08 #####
+# 리소스 그룹 만들기
+resourceGroup='08_aciGroupRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# Bicep 템플릿 배포
+containerGroupName='aci-wordpress'
+az deployment group create \
+  -n "WordPressDeployment" -g $resourceGroup \
+  -f aciWordPress.bicep \
+  -p containerGroupName=$containerGroupName
+
+# 컨테이너 그룹의 DNS 이름 확인
+az container show -g $resourceGroup -n $containerGroupName \
+  --query ipAddress.fqdn -o tsv
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 09 #####
+# AKS 연결
+resourceGroup='09_aciAksRg'
+aksName='aci-aks'
+az aks get-credentials -g $resourceGroup -n $aksName --admin
+
+# AKS 노드 확인
+kubectl get nodes
+
+# ACI 커넥터가 정상적으로 보이지 않는 경우 
+az aks disable-addons -a virtual-node -g $resourceGroup -n $aksName
+
+az aks enable-addons \
+ --resource-group $resourceGroup --name $aksName \
+ --addons virtual-node --subnet-name aciSubnet
+
+# ACI 노드의 taint 확인
+kubectl describe nodes/virtual-node-aci-linux
+
+# ACI 없이 Deployment 배포
+kubectl apply -f aksAci.yaml
+kubectl get deploy,pods
+
+# 배포한 Pod가 실행되는 노드 확인
+kubectl get pods -o wide
+
+# ACI Virtual Node를 포함하여 Pod 스케줄링
+kubectl apply -f aksAci.yaml
+
+# Pod 스케줄링 확인
+kubectl get pods -o wide
+
+# Pod 축소
+kubectl scale deploy node-affinity-demo --replicas 3
+kubectl get pods -o wide
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes
+
+
+##### TASK 10 #####
+# 리소스 그룹 만들기
+resourceGroup='10_aciLogicRg'
+location='koreacentral'
+az group create -n $resourceGroup -l $location
+
+# ACR 만들기
+acrName='[ACR_NAME]'
+az acr create -g $resourceGroup -n $acrName \
+  --sku Basic --admin-enabled true
+
+# ACR 자격 증명 가져오기
+acrPassword=$(az acr credential show -n $acrName \
+  --query "passwords[0].value" -o tsv)
+
+loginServer=$(az acr show -n $acrName \
+  --query loginServer -o tsv)
+
+# Dockerfile에서 ACR로 이미지 빌드 및 푸시
+image="myweb:1.0"
+az acr build --image $image --registry $acrName \
+  --file Dockerfile .
+
+# 스토리지 계정 만들기
+storageName='[STORAGE_ACCOUNT_NAME]'
+az storage account create -n $storageName \
+  -g $resourceGroup -l $location \
+  --sku Standard_LRS --kind StorageV2
+
+# 스토리지 계정 키 확인
+storageKey=$(az storage account keys list -g $resourceGroup -n $storageName \
+  --query [0].value -o tsv)
+
+# 스토리지 게정에 컨테이너 만들기
+containerName='acilogs'
+az storage container create --account-name $storageName \
+  --name $containerName --auth-mode key \
+  --account-key $storageKey
+
+# ACR 자격 증명 확인
+echo $loginServer 
+echo $acrPassword 
+
+# 리소스 그룹 삭제
+az group delete -n $resourceGroup --no-wait --yes

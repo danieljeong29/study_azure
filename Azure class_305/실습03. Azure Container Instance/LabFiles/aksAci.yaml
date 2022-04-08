@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-affinity-demo
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: node-affinity-demo
+  template:
+    metadata:
+      labels:
+        app: node-affinity-demo
+    spec:
+      containers:
+      - name: node-affinity-demo
+        image: nginx
+        resources:
+          limits:
+            memory: "100Mi"
+            cpu: "0.1"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.azure.com/role
+                operator: In
+                values:
+                - agent
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 10 
+            preference:
+              matchExpressions:
+              - key: type
+                operator: NotIn
+                values:
+                - virtual-kubelet
+      tolerations:
+      - key: virtual-kubelet.io/provider
+        operator: Equal
+        value: azure
+        effect: NoSchedule
+         
+
+
